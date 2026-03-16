@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>CRYPT LOCATION — Map</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:#000;overflow:hidden;}
+canvas{display:block;}
+#info{position:fixed;top:12px;left:50%;transform:translateX(-50%);
+  color:#4488ff;font-family:monospace;font-size:11px;letter-spacing:3px;
+  text-transform:uppercase;pointer-events:none;text-shadow:0 0 10px #4488ff;}
+#hint{position:fixed;bottom:12px;left:50%;transform:translateX(-50%);
+  color:rgba(68,136,255,.4);font-family:monospace;font-size:10px;letter-spacing:2px;pointer-events:none;}
+</style>
+</head>
+<body>
+<div id="info">CRYPT LOCATION</div>
+<div id="hint">DRAG TO ORBIT · SCROLL TO ZOOM</div>
+<script>
+// ── Scene ──────────────────────────────────────────────────────
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x01010a);
+scene.fog = new THREE.FogExp2(0x020210, 0.028);
+
+const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.1, 300);
+camera.position.set(0, 22, 38);
+camera.lookAt(0, 2, 0);
+
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(devicePixelRatio);
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.5;
+document.body.appendChild(renderer.domElement);
+
+window.addEventListener('resize',()=>{
+  camera.aspect=innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+});
+
+// ── Materials ──────────────────────────────────────────────────
+const lm = c => new THREE.MeshLambertMaterial({color:c});
+const sm = (c,e,ei) => new THREE.MeshStandardMaterial({color:c,emissive:e||0x000000,emissiveIntensity:ei||0,roughness:.9,metalness:.1});
+
+const STONE   = lm(0x1a1a28);
+const STONE2  = lm(0x151520);
+const STONE3  = lm(0x22222e);
+const DARK    = lm(0x0a0a14);
+const FLOOR_M = lm(0x141420);
+const RUNE    = new THREE.MeshStandardMaterial({color:0x0033aa,emissive:0x0055ff,emissiveIntensity:1.2,roughness:.3});
+const RUNE2   = new THREE.MeshStandardMaterial({color:0x001166,emissive:0x0033cc,emissiveIntensity:.8,roughness:.3});
+const GLOW    = new THREE.MeshStandardMaterial({color:0x00aaff,emissive:0x00ccff,emissiveIntensity:2.0,roughness:.1});
+const ICE     = new THREE.MeshStandardMaterial({color:0x88ccff,emissive:0x2266aa,emissiveIntensity:.4,roughness:.2,metalness:.3,transparent:true,opacity:.85});
+const CHAIN_M = lm(0x2a2830);
+const COFFIN  = lm(0x1a1218);
+const WOOD_M  = lm(0x1a1008);
+
+const rng = (a,b) => a+(b-a)*Math.random();
+
+function place(geo,mat,x,y,z,ry){
+  const m=new THREE.Mesh(geo,mat);
+  m.position.set(x,y,z);
+  if(ry) m.rotation.y=ry;
+  m.castShadow=true; m.receiveShadow=true;
+  scene.add(m); return m;
+}
+const bx=(w,h,d)=>new THREE.BoxGeometry(w,h,d);
+const cy=(r,h,s)=>new THREE.CylinderGeometry(r,r,h,s||12);
+
+// ── GROUND / FLOOR TILES ──────────────────────────────────────
+// Cracked stone floor
+for(let x=-5;x<=5;x++){
+  for(let z=-5;z<=5;z++){
+    const c=Math.random()<.3?STONE2:Math.random()<.2?STONE3:FLOOR_M;
+    const tile=new THREE.Mesh(bx(2.9,.12,2.9),c);
+    tile.position.set(x*3,.0,z*3);
+    tile.receiveShadow=true;
+    scene.add(tile);
+    // Grout lines
+    const gx=new THREE.Mesh(bx(.06,.13,2.9),lm(0x0a0a12));
+    gx.position.set(x*3+1.45,.01,z*3); scene.add(gx);
+    const gz=new THREE.Mesh(bx(2.9,.13,.06),lm(0x0a0a12));
+    gz.position.set(x*3,.01,z*3+1.45); scene.add(gz);
+  }
+}
+// Outer floor extension
+for(let i=0;i<200;i++){
+  const fx=rng(-30,30),fz=rng(-30,30);
+  if(Math.abs(fx)<16&&Math.abs(fz)<16) continue;
+  const tile=new THREE.Mesh(bx(rng(1.5,3.5),.1,rng(1.5,3.5)),Math.random()<.5?STONE2:DARK);
+  tile.position.set(fx,rng(-.3,.1),fz);
+  tile.rotation.y=rng(0,Math.PI*.1);
+  tile.receiveShadow=true;
+  scene.add(tile);
+}
+
+// ── OUTER CRYPT WALLS ─────────────────────────────────────────
+function cryptWall(x,z,w,h,d,ry){
+  // Main wall slab
+  const m=new THREE.Mesh(bx(w,h,d),Math.random()<.5?STONE:STONE2);
+  m.position.set(x,h/2,z);
+  if(ry) m.rotation.y=ry;
+  m.castShadow=true; m.receiveShadow=true;
+  scene.add(m);
+  // Stone block rows
+  const rows=Math.floor(h/1.2);
+  for(let r=0;r<rows;r++){
+    const cols=Math.floor(w/1.5);
+    for(let c=0;c<cols;c++){
+      const offset=(r%2===0)?0:.75;
+      const bw=rng(.8,1.4),bh=rng(.55,.85);
+      const bm=new THREE.Mesh(bx(bw-.05,bh-.05,d+.06),Math.random()<.3?STONE3:STONE);
+      const lx=ry?0:(c*1.5-w/2+.75+offset-(c%2?.3:0));
+      const lz=ry?(c*1.5-w/2+.75+offset-(c%2?.3:0)):0;
+      bm.position.set(x+(ry?0:lx), r*1.15+bh/2+.2, z+(ry?lz:0));
+      if(ry) bm.rotation.y=ry;
+      bm.castShadow=true;
+      scene.add(bm);
+    }
+  }
+}
+
+// North wall
+cryptWall(0,  -16, 34, 8, .8, 0);
+// South wall
+cryptWall(0,   16, 34, 8, .8, 0);
+// East wall
+cryptWall( 17,  0, .8, 8, 34, 0);
+// West wall
+cryptWall(-17,  0, .8, 8, 34, 0);
+
+// ── ARCHED DOORWAY (south entrance) ──────────────────────────
+// Left and right of arch
+place(bx(4,8,.85),STONE2,  -5, 4,-16.4);
+place(bx(4,8,.85),STONE2,   5, 4,-16.4);
+// Arch top lintel
+place(bx(5,.8,.9),STONE,    0, 7.6,-16.4);
+// Arch curve approximation
+for(let a=0;a<=8;a++){
+  const ang=(a/8)*Math.PI;
+  const ax=Math.cos(ang)*2.5, ay=Math.sin(ang)*1.8+6.0;
+  const ab=new THREE.Mesh(bx(.9,.9,.95),STONE2);
+  ab.position.set(ax,ay,-16.4);
+  ab.rotation.z=ang-Math.PI/2;
+  scene.add(ab);
+}
+// Spiked arch crenellations
+for(let i=-4;i<=4;i++){
+  const spike=new THREE.Mesh(new THREE.ConeGeometry(.2,.6,4),STONE3);
+  spike.position.set(i*1.1,8.35,-16.4);
+  scene.add(spike);
+}
+
+// ── GOTHIC COLUMNS ────────────────────────────────────────────
+function column(x,z){
+  // Base
+  place(bx(1.4,.4,1.4), STONE2, x,.2,z);
+  // Shaft
+  const shaft=new THREE.Mesh(cy(.55,7,8),STONE);
+  shaft.position.set(x,3.9,z); shaft.castShadow=true; scene.add(shaft);
+  // Vertical ridges
+  for(let r=0;r<8;r++){
+    const ra=r/8*Math.PI*2;
+    const ridge=new THREE.Mesh(bx(.08,7,.08),STONE3);
+    ridge.position.set(x+Math.cos(ra)*.54,3.9,z+Math.sin(ra)*.54);
+    scene.add(ridge);
+  }
+  // Capital
+  place(bx(1.4,.5,1.4),STONE2, x,7.65,z);
+  place(bx(1.6,.3,1.6),STONE3, x,7.9,z);
+  // Gothic pointed top
+  const cap=new THREE.Mesh(new THREE.ConeGeometry(.5,1.2,8),STONE2);
+  cap.position.set(x,8.7,z); scene.add(cap);
+  // Small spikes on capital
+  for(let s=0;s<4;s++){
+    const sa=s/4*Math.PI*2+Math.PI/4;
+    const sp=new THREE.Mesh(new THREE.ConeGeometry(.1,.5,4),STONE3);
+    sp.position.set(x+Math.cos(sa)*.6,8.1,z+Math.sin(sa)*.6);
+    scene.add(sp);
+  }
+}
+// Column pairs lining the main hall
+[[-6,0],[-6,-6],[-6,6],[6,0],[6,-6],[6,6],
+ [-6,-12],[6,-12],[-6,12],[6,12]].forEach(([cx,cz])=>column(cx,cz));
+
+// ── CEILING ARCHES BETWEEN COLUMNS ───────────────────────────
+function arch(x1,z1,x2,z2){
+  const dx=x2-x1,dz=z2-z1;
+  const len=Math.sqrt(dx*dx+dz*dz);
+  const ry=Math.atan2(dx,dz);
+  const segs=8;
+  for(let i=0;i<=segs;i++){
+    const t=i/segs;
+    const ax=x1+dx*t, az=z1+dz*t;
+    const ay=8.2+Math.sin(t*Math.PI)*1.5;
+    const ab=new THREE.Mesh(bx(.35,.35,len/segs+.05),STONE2);
+    ab.position.set(ax,ay,az);
+    ab.rotation.y=ry;
+    const curve=Math.sin(t*Math.PI);
+    ab.rotation.z=curve*.3*(t<.5?1:-1);
+    scene.add(ab);
+  }
+}
+// Cross arches
+[[-6,-12],[-6,-6],[-6,0],[-6,6],[-6,12]].forEach(([cx,cz])=>arch(cx,cz,6,cz));
+[[-6,-12],[-6,-6],[-6,0],[-6,6]].forEach(([cx,cz])=>arch(cx,cz,cx,cz+6));
+[[6,-12],[6,-6],[6,0],[6,6]].forEach(([cx,cz])=>arch(cx,cz,cx,cz+6));
+
+// ── CEILING ───────────────────────────────────────────────────
+// Central ceiling slabs
+for(let x=-4;x<=4;x+=2){
+  for(let z=-7;z<=7;z+=2){
+    const c=new THREE.Mesh(bx(2.1,.3,2.1),Math.random()<.4?STONE2:STONE);
+    c.position.set(x*1.7,9.4,z*1.7); scene.add(c);
+  }
+}
+
+// ── MAIN RUNE PORTAL ─────────────────────────────────────────
+// Large glowing octagonal portal/seal on the floor center
+function runePortal(px,py,pz,radius,rot){
+  // Outer ring
+  const outerRing=new THREE.Mesh(
+    new THREE.TorusGeometry(radius,.22,8,24),RUNE
+  );
+  outerRing.position.set(px,py,pz);
+  outerRing.rotation.x=rot||(-Math.PI/2);
+  outerRing.name='runeRing1';
+  scene.add(outerRing);
+  // Inner ring
+  const innerRing=new THREE.Mesh(
+    new THREE.TorusGeometry(radius*.6,.14,8,24),RUNE2
+  );
+  innerRing.position.set(px,py+.02,pz);
+  innerRing.rotation.x=rot||(-Math.PI/2);
+  innerRing.name='runeRing2';
+  scene.add(innerRing);
+  // Hub
+  const hub=new THREE.Mesh(
+    new THREE.CylinderGeometry(.25,.25,.08,8),GLOW
+  );
+  hub.position.set(px,py+.04,pz);
+  scene.add(hub);
+  // Spokes
+  for(let s=0;s<8;s++){
+    const sa=s/8*Math.PI*2;
+    const spoke=new THREE.Mesh(bx(radius*.85,.06,.1),RUNE);
+    spoke.position.set(px,py+.01,pz);
+    spoke.rotation.y=sa;
+    spoke.rotation.x=-Math.PI/2;
+    scene.add(spoke);
+  }
+  // Rune glow flat disc
+  const disc=new THREE.Mesh(
+    new THREE.CircleGeometry(radius*.95,32),
+    new THREE.MeshStandardMaterial({color:0x001133,emissive:0x002266,emissiveIntensity:.6,transparent:true,opacity:.55,side:THREE.DoubleSide})
+  );
+  disc.position.set(px,py-.01,pz);
+  disc.rotation.x=-Math.PI/2;
+  scene.add(disc);
+  // Point light
+  const pl=new THREE.PointLight(0x0055ff,4,14);
+  pl.position.set(px,py+.5,pz); pl.name='portalPulse'; scene.add(pl);
+}
+runePortal(0, .1, 0, 3.8);
+
+// Secondary smaller portals
+runePortal(-10, .1, -8,  2.2);
+runePortal( 10, .1,  8,  2.2);
+runePortal(  0, .1, 12,  1.8);
+
+// ── SARCOPHAGI / COFFINS ──────────────────────────────────────
+function sarcophagus(x,z,ry){
+  // Base slab
+  place(bx(2.4,.45,1.1),STONE2, x,.22,z, ry);
+  // Body
+  place(bx(2.2,.6,.95),COFFIN, x,.72,z, ry);
+  // Lid — slightly raised, carved
+  const lid=new THREE.Mesh(bx(2.2,.18,.95),STONE3);
+  lid.position.set(x,1.04,z); lid.rotation.y=ry||0; scene.add(lid);
+  // Face carving (rough)
+  const face=new THREE.Mesh(bx(.3,.35,.1),STONE2);
+  face.position.set(
+    x+(Math.cos(ry||0)*.6), 1.13,
+    z+(Math.sin(ry||0)*.6)
+  );
+  face.rotation.y=ry||0; scene.add(face);
+  // Small rune on lid
+  const rune=new THREE.Mesh(bx(.5,.02,.3),RUNE2);
+  rune.position.set(x,1.14,z); rune.rotation.y=ry||0; scene.add(rune);
+}
+// Ring of sarcophagi around the main portal
+[
+  [ 8,  0, -Math.PI/2],
+  [-8,  0,  Math.PI/2],
+  [ 0,  8,  Math.PI],
+  [ 0, -8,  0],
+  [ 6, -10, .3],
+  [-6, -10, -.3],
+  [ 6,  10, .3],
+  [-6,  10, -.3],
+  [ 13, -5,  1.1],
+  [-13,  5, -1.1],
+].forEach(([sx,sz,sr])=>sarcophagus(sx,sz,sr));
+
+// ── ALTAR ─────────────────────────────────────────────────────
+// Large raised altar at back of crypt
+place(bx(6,.5,3),       STONE2,  0,.25,-13);
+place(bx(5.6,.8,2.6),   STONE3,  0,.9, -13);
+place(bx(5.2,.3,2.2),   STONE,   0,1.55,-13);
+// Altar top surface rune
+const altarRune=new THREE.Mesh(bx(3.5,.04,1.4),RUNE);
+altarRune.position.set(0,1.72,-13); scene.add(altarRune);
+// Altar candles (glowing)
+[[-1.8,1.72,-12.2],[1.8,1.72,-12.2],[0,1.72,-13.8]].forEach(([cx,cy2,cz])=>{
+  const cand=new THREE.Mesh(cy(.08,.5,6),lm(0xe8dcc8));
+  cand.position.set(cx,cy2+.25,cz); scene.add(cand);
+  const flame=new THREE.Mesh(new THREE.SphereGeometry(.07,6,6),GLOW);
+  flame.position.set(cx,cy2+.55,cz); scene.add(flame);
+  const cl=new THREE.PointLight(0x2244ff,.8,3); cl.position.set(cx,cy2+.6,cz); scene.add(cl);
+});
+// Altar side columns
+[-2.2,2.2].forEach(ax=>{
+  place(bx(.5,2.6,.5),STONE2, ax,1.3,-13);
+  const top=new THREE.Mesh(new THREE.ConeGeometry(.3,.6,4),STONE3);
+  top.position.set(ax,2.9,-13); scene.add(top);
+});
+
+// ── WALL SCONCES / TORCHES ────────────────────────────────────
+function sconce(x,y,z,ry){
+  // Bracket
+  place(bx(.3,.1,.4),lm(0x1e1a14), x,y,z,ry);
+  place(bx(.08,.5,.08),lm(0x1a1814), x,y-.15,z,ry);
+  // Bowl
+  const bowl=new THREE.Mesh(new THREE.CylinderGeometry(.14,.08,.2,8),lm(0x222018));
+  bowl.position.set(x,y+.05,z); scene.add(bowl);
+  // Flame glow
+  const flame=new THREE.Mesh(new THREE.SphereGeometry(.1,6,6),
+    new THREE.MeshStandardMaterial({color:0x0044cc,emissive:0x0066ff,emissiveIntensity:2,roughness:.1}));
+  flame.position.set(x,y+.22,z); flame.name='sconceFlame'; scene.add(flame);
+  const sl=new THREE.PointLight(0x0044ff,1.8,6);
+  sl.position.set(x,y+.3,z); sl.name='sconceLight'; scene.add(sl);
+}
+// Sconces along walls
+[
+  [-16,4,-10],[-16,4,-2],[-16,4,6],
+  [ 16,4,-10],[ 16,4,-2],[ 16,4,6],
+  [-4,4,-15.5],[ 4,4,-15.5],
+  [-4,4, 15.5],[ 4,4, 15.5],
+].forEach(([x,y,z])=>sconce(x,y,z));
+
+// ── CHAINS ────────────────────────────────────────────────────
+function chain(x,z,len){
+  for(let i=0;i<len;i++){
+    const link=new THREE.Mesh(new THREE.TorusGeometry(.08,.025,4,8),CHAIN_M);
+    link.position.set(x+rng(-.04,.04), 8.5-i*.22+rng(-.04,.04), z+rng(-.04,.04));
+    link.rotation.x = i%2===0?0:Math.PI/2;
+    scene.add(link);
+  }
+}
+[[-4,-4],[ 4,-4],[-4, 4],[ 4, 4],
+ [-10,-8],[10,-8],[-10,8],[10,8]].forEach(([cx,cz])=>chain(cx,cz,Math.floor(rng(6,14))));
+
+// ── ICE / FROST FORMATIONS ────────────────────────────────────
+function iceCluster(x,z){
+  const count=Math.floor(rng(3,7));
+  for(let i=0;i<count;i++){
+    const h=rng(.4,1.8);
+    const spike=new THREE.Mesh(new THREE.ConeGeometry(rng(.06,.18),h,5),ICE);
+    spike.position.set(x+rng(-.5,.5), h/2, z+rng(-.5,.5));
+    spike.rotation.set(rng(-.15,.15),rng(0,Math.PI*2),rng(-.1,.1));
+    scene.add(spike);
+  }
+  // Base frost patch
+  const frost=new THREE.Mesh(new THREE.CircleGeometry(rng(.4,.9),8),
+    new THREE.MeshStandardMaterial({color:0x88ccff,emissive:0x224488,emissiveIntensity:.3,transparent:true,opacity:.6,roughness:.2}));
+  frost.rotation.x=-Math.PI/2;
+  frost.position.set(x,.02,z);
+  scene.add(frost);
+  const fl=new THREE.PointLight(0x44aaff,.6,4);
+  fl.position.set(x,.5,z); scene.add(fl);
+}
+[[-12,-12],[12,-12],[-12,12],[12,12],
+ [-15,0],[15,0],[0,-14],[0,14],
+ [-9,-5],[9,-5],[-8,9],[8,9]].forEach(([ix,iz])=>iceCluster(ix,iz));
+
+// ── BROKEN PILLARS / RUBBLE ───────────────────────────────────
+function rubble(x,z){
+  const h=rng(.3,1.4);
+  const stub=new THREE.Mesh(cy(rng(.3,.55),h,8),STONE2);
+  stub.position.set(x,h/2,z); scene.add(stub);
+  // Chunks
+  for(let i=0;i<5;i++){
+    const chunk=new THREE.Mesh(bx(rng(.2,.6),rng(.1,.35),rng(.2,.6)),STONE);
+    chunk.position.set(x+rng(-.8,.8),rng(0,.3),z+rng(-.8,.8));
+    chunk.rotation.set(rng(0,.5),rng(0,Math.PI),rng(0,.5));
+    scene.add(chunk);
+  }
+}
+[[-14,-13],[13,-14],[-13,13],[14,14],
+ [ 0,-5],[5,3],[-4,5],[-7,-7],[8,-8]].forEach(([rx,rz])=>rubble(rx,rz));
+
+// ── SKULL PILES ───────────────────────────────────────────────
+function skull(x,y,z,s){
+  const sc=s||1;
+  const head=new THREE.Mesh(new THREE.SphereGeometry(.14*sc,8,6),STONE2);
+  head.position.set(x,y+.13*sc,z); scene.add(head);
+  // Eye sockets
+  [-1,1].forEach(side=>{
+    const eye=new THREE.Mesh(new THREE.SphereGeometry(.035*sc,5,5),DARK);
+    eye.position.set(x+side*.06*sc,y+.15*sc,z-.1*sc); scene.add(eye);
+  });
+  // Jaw
+  const jaw=new THREE.Mesh(bx(.18*sc,.07*sc,.14*sc),STONE3);
+  jaw.position.set(x,y+.03*sc,z+.02*sc); scene.add(jaw);
+}
+// Skull clusters along walls
+[[-15,.15,-8],[-15,.15,-4],[-15,.15,-0],
+ [15,.15,-8],[15,.15,-4],[15,.15,2],
+ [-8,.15,-15],[-4,.15,-15],
+ [-3,.15,14],[3,.15,14]].forEach(([sx,sy,sz],i)=>{
+  skull(sx,sy,sz);
+  skull(sx+rng(-.2,.2),sy+.25,sz+rng(-.2,.2),.85);
+  if(i%3===0) skull(sx+rng(-.3,.3),sy+.45,sz+rng(-.3,.3),.7);
+});
+
+// ── GLOWING CRYSTAL / SOUL GEMS ──────────────────────────────
+function soulGem(x,z,col){
+  const gem=new THREE.Mesh(
+    new THREE.OctahedronGeometry(.22,0),
+    new THREE.MeshStandardMaterial({color:col,emissive:col,emissiveIntensity:1.5,roughness:.1,metalness:.2,transparent:true,opacity:.85})
+  );
+  gem.position.set(x,.4,z); gem.name='gem'+x+'_'+z;
+  scene.add(gem);
+  const gl=new THREE.PointLight(col,1.4,5); gl.position.set(x,.5,z); scene.add(gl);
+  // Pedestal
+  const ped=new THREE.Mesh(cy(.15,.35,6),STONE2); ped.position.set(x,.17,z); scene.add(ped);
+  place(bx(.4,.07,.4),STONE3,x,.36,z);
+}
+soulGem(-12, -5, 0x0055ff);
+soulGem( 12,  5, 0x0055ff);
+soulGem(  0, 10, 0x4400cc);
+soulGem( -8, 12, 0x0033aa);
+soulGem(  8,-12, 0x2200bb);
+
+// ── BONE PILES / FLOOR DETAIL ────────────────────────────────
+for(let i=0;i<30;i++){
+  const bx2=rng(-15,15), bz2=rng(-14,14);
+  if(Math.abs(bx2)<5&&Math.abs(bz2)<5) continue;
+  const bone=new THREE.Mesh(
+    new THREE.CylinderGeometry(.03,rng(.02,.05),rng(.3,.8),5),
+    lm(0x2e2c24)
+  );
+  bone.position.set(bx2,rng(.02,.06),bz2);
+  bone.rotation.set(rng(-.2,.2),rng(0,Math.PI),rng(0,Math.PI/2));
+  scene.add(bone);
+}
+
+// ── LIGHTING ──────────────────────────────────────────────────
+// Deep void ambient
+scene.add(new THREE.AmbientLight(0x04040e,0.8));
+
+// Cold blue moonlight shaft from above (skylight crack)
+const mainLight=new THREE.DirectionalLight(0x2244aa,0.9);
+mainLight.position.set(0,20,0);
+mainLight.castShadow=true;
+mainLight.shadow.mapSize.set(2048,2048);
+scene.add(mainLight);
+
+// Eerie ground fog glow
+const fogGlow=new THREE.PointLight(0x001144,1.5,40);
+fogGlow.position.set(0,0.1,0); fogGlow.name='fogPulse'; scene.add(fogGlow);
+
+// Hemisphere — cold from above, void from below
+scene.add(new THREE.HemisphereLight(0x050a1a,0x000005,0.5));
+
+// Rim lights along the side walls
+[[-16,3,-5,0x000833],[ 16,3, 5,0x000833],
+ [ 0, 3,-16,0x000833],[ 0, 3, 16,0x000833]].forEach(([x,y,z,c])=>{
+  const rl=new THREE.PointLight(c,.7,18); rl.position.set(x,y,z); scene.add(rl);
+});
+
+// ── ORBIT CONTROLS (manual) ────────────────────────────────────
+let isDragging=false,prevX=0,prevY=0;
+let theta=0,phi=0.45,radius=40;
+
+renderer.domElement.addEventListener('mousedown',e=>{isDragging=true;prevX=e.clientX;prevY=e.clientY;});
+renderer.domElement.addEventListener('mousemove',e=>{
+  if(!isDragging)return;
+  theta-=(e.clientX-prevX)*.008;
+  phi=Math.max(.1,Math.min(1.4,phi-(e.clientY-prevY)*.006));
+  prevX=e.clientX;prevY=e.clientY;
+});
+renderer.domElement.addEventListener('mouseup',()=>isDragging=false);
+renderer.domElement.addEventListener('wheel',e=>{radius=Math.max(8,Math.min(60,radius+e.deltaY*.04));});
+renderer.domElement.addEventListener('touchstart',e=>{isDragging=true;prevX=e.touches[0].clientX;prevY=e.touches[0].clientY;});
+renderer.domElement.addEventListener('touchmove',e=>{
+  if(!isDragging)return;
+  theta-=(e.touches[0].clientX-prevX)*.008;
+  phi=Math.max(.1,Math.min(1.4,phi-(e.touches[0].clientY-prevY)*.006));
+  prevX=e.touches[0].clientX;prevY=e.touches[0].clientY;
+});
+renderer.domElement.addEventListener('touchend',()=>isDragging=false);
+
+// ── RENDER LOOP ───────────────────────────────────────────────
+function animate(t){
+  requestAnimationFrame(animate);
+  const time=t*.001;
+
+  // Pulse all portal lights
+  scene.traverse(obj=>{
+    if(obj.isLight){
+      if(obj.name==='portalPulse')  obj.intensity=3.5+Math.sin(time*2.1)*.8+Math.sin(time*5.3)*.3;
+      if(obj.name==='fogPulse')     obj.intensity=1.2+Math.sin(time*.8)*.4;
+      if(obj.name==='sconceLight')  obj.intensity=1.6+Math.sin(time*7+obj.position.x)*.3;
+    }
+    if(obj.isMesh){
+      if(obj.name==='runeRing1') obj.rotation.z=time*.18;
+      if(obj.name==='runeRing2') obj.rotation.z=-time*.28;
+      if(obj.name&&obj.name.startsWith('gem')) obj.rotation.y=time*.6;
+      if(obj.name==='sconceFlame') {
+        obj.scale.y=1+Math.sin(time*8+obj.position.x)*.12;
+        obj.scale.x=1+Math.sin(time*11+obj.position.z)*.08;
+      }
+    }
+  });
+
+  camera.position.set(
+    Math.sin(theta)*radius*Math.cos(phi),
+    Math.sin(phi)*radius*.8+2,
+    Math.cos(theta)*radius*Math.cos(phi)
+  );
+  camera.lookAt(0,2,0);
+  renderer.render(scene,camera);
+}
+animate(0);
+</script>
+</body>
+</html>
